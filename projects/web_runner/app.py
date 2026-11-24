@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_from_directory
+from flask import Flask, render_template, request, send_from_directory, jsonify
 import argparse
 import os, time, uuid, glob, shutil, textwrap, zipfile, subprocess, multiprocessing
 from datetime import datetime, timezone
@@ -12,6 +12,10 @@ import logging
 import json
 from logging.handlers import RotatingFileHandler
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from openai import APIError, RateLimitError
+from assistant.llm_client import ExtractionError
+from assistant.service import handle_message
 
 # MPTRAC tool paths and local test-mode defaults.
 ATM_INIT_CMD = '../../src/atm_init'
@@ -820,6 +824,23 @@ def show_logs():
     except Exception as e:
         logger.error(f"[LOG] Error reading log file: {e}")
         return render_template('error.html', stdout=f"❌ Error reading log file: {e}"), 500
+
+# AI assistant: turn a natural-language request into form values.
+@app.route('/assistant', methods=['POST'])
+def assistant():
+    data = request.get_json(silent=True) or {}
+    message = (data.get('message') or '').strip()
+    if not message:
+        return jsonify(error="Please type a request."), 400
+    try:
+        return jsonify(handle_message(message, data.get('previous')))
+    except ExtractionError:
+        return jsonify(error="Sorry, I could not understand that. Could you rephrase it?"), 502
+    except RateLimitError:
+        return jsonify(error="The language model is busy. Please wait a minute and try again."), 429
+    except APIError:
+        logger.exception("[ASSISTANT] LLM request failed")
+        return jsonify(error="The assistant is currently unavailable. Please fill in the form manually."), 503
 
 # Parse command-line options and start the Flask server.
 if __name__ == '__main__':
