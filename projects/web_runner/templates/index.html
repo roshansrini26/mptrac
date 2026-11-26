@@ -210,13 +210,33 @@
         }
       }
       
-      /* AI assistant chat */
-      .chat-log { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+      /* AI assistant (floating) */
+      .assistant-fab {
+        position: fixed; right: 24px; bottom: 24px; z-index: 1000;
+        width: 56px; height: 56px; border-radius: 50%; border: none;
+        background: #0d4f8b; color: #fff; font-size: 22px; cursor: pointer;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+      }
+      .assistant-fab:hover { background: #1666ad; }
+      .assistant-window {
+        position: fixed; right: 24px; bottom: 92px; z-index: 1000;
+        width: 380px; max-width: calc(100vw - 32px); height: 480px; max-height: 70vh;
+        display: none; flex-direction: column;
+        background: #1a2230; border: 1px solid #2b3440; border-radius: 16px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); padding: 12px;
+      }
+      .assistant-window.open { display: flex; }
+      .assistant-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+      .chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
       .chat-msg { padding: 8px 12px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; }
       .chat-user { align-self: flex-end; background: #0d4f8b; color: #fff; }
       .chat-bot  { align-self: flex-start; background: #2b3440; color: #f4f7fb; }
       .chat-info { align-self: flex-start; color: #f0c36d; font-size: 0.9em; }
       .ai-filled { outline: 2px solid #f0c36d; }
+
+      .apply-btn { margin-top: 8px; padding: 6px 12px; }
+      .apply-btn:disabled { opacity: 0.6; cursor: default; transform: none; box-shadow: none; }
+     .chat-summary { font-family: ui-monospace, Menlo, monospace; font-size: 0.9em; }
 
     </style>
   </head>
@@ -266,16 +286,23 @@
       For a first run, choose a meteorological dataset, set the release time and location, and keep most other default settings unchanged. You can also load a predefined case from the Examples section.
     </p>
 
-    <!-- AI assistant -->
-    <div id="assistant-panel" class="section-card page-width" style="margin: 16px auto; padding: 16px;">
-      <h4><i class="fa fa-robot"></i> AI Assistant</h4>
-      <p style="color: #ccc;">Describe your simulation in plain language. The assistant fills in the form below for you to review.</p>
+    <!-- AI assistant (floating) -->
+    <button id="assistant-toggle" class="assistant-fab" type="button"
+            onclick="toggleAssistant()" title="Open the MPTRAC Assistant">
+      <i class="fa fa-robot"></i>
+    </button>
+    <div id="assistant-window" class="assistant-window">
+      <div class="assistant-header">
+        <strong><i class="fa fa-robot"></i> MPTRAC Assistant</strong>
+        <button type="button" class="btn btn-secondary" style="padding: 4px 10px;"
+                onclick="resetChat()" title="Start a new request">New</button>
+      </div>
       <div id="chat-log" class="chat-log"></div>
       <div style="display: flex; gap: 8px; margin-top: 8px;">
         <input id="chat-input" class="w3-input w3-dark-gray w3-round" type="text"
-               placeholder="e.g. 5,000 particles from 50°N, 7°E between 10 and 12 km for 2 days, starting 5 June 2011 at 00 UTC">
-        <button id="chat-send" type="button" class="btn btn-primary" style="padding: 8px 16px;" onclick="sendChat()">Send</button>
-        <button type="button" class="btn btn-secondary" style="padding: 8px 16px;" onclick="resetChat()">New</button>
+               placeholder="Describe your simulation…">
+        <button id="chat-send" type="button" class="btn btn-primary"
+                style="padding: 8px 14px;" onclick="sendChat()">Send</button>
       </div>
     </div>
     
@@ -1077,6 +1104,23 @@
     <script>
       let assistantState = null;   // request built so far; sent back with every message
 
+      const shownWarnings = new Set();   // show each warning only once
+      const GREETING = 'Hi! Describe the simulation you want, for example: ' +
+        '"5,000 particles from 50°N, 7°E between 10 and 12 km for 2 days, ' +
+        'starting 5 June 2011 at 00 UTC". I will fill in the form for you to review.';
+
+      function toggleAssistant() {
+        const win = document.getElementById('assistant-window');
+        const isOpen = win.classList.toggle('open');
+        document.querySelector('#assistant-toggle i').className = isOpen ? 'fa fa-xmark' : 'fa fa-robot';
+        if (isOpen) {
+          if (document.getElementById('chat-log').children.length === 0) {
+            addChatMessage(GREETING, 'bot');
+          }
+          document.getElementById('chat-input').focus();
+        }
+      }
+
       function addChatMessage(text, kind) {
         const div = document.createElement('div');
         div.className = 'chat-msg chat-' + kind;
@@ -1089,6 +1133,8 @@
 
       function fillForm(fields) {
         document.querySelectorAll('.ai-filled').forEach(el => el.classList.remove('ai-filled'));
+        const section = el.closest('.section-card');
+        if (section) section.classList.remove('w3-hide');
         let count = 0;
         Object.entries(fields).forEach(([name, value]) => {
           document.querySelectorAll(`form[action="/run"] [name="${name}"]`).forEach(el => {
@@ -1098,6 +1144,46 @@
           });
         });
         return count;
+      }
+
+      function showProposal(data) {
+        const r = data.request;
+        const f = data.fields;
+        const onOff = v => (v === true ? 'on' : v === false ? 'off' : 'form default');
+        const height = r.altitude_min_km === r.altitude_max_km
+          ? `${r.altitude_min_km} km`
+          : `${r.altitude_min_km}–${r.altitude_max_km} km`;
+
+        const summary = [
+          `Start:      ${f.start_time} UTC`,
+          `End:        ${f.stop_time} UTC (${r.direction === 'backward' ? 'backward' : 'forward'})`,
+          `Location:   ${r.latitude}°, ${r.longitude}°`,
+          `Height:     ${height}`,
+          `Particles:  ${f.rep}`,
+          `Diffusion:  ${onOff(r.diffusion)}`,
+          `Convection: ${onOff(r.convection)}`,
+        ].join('\n');
+
+        // An older proposal must not be applied anymore.
+        document.querySelectorAll('.apply-btn:not(:disabled)').forEach(b => {
+          b.disabled = true;
+          b.textContent = 'Replaced by newer settings';
+        });
+
+        const box = addChatMessage(summary, 'bot');
+        box.classList.add('chat-summary');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-primary apply-btn';
+        btn.textContent = 'Apply to form';
+        btn.onclick = () => {
+          const n = fillForm(f);
+          btn.disabled = true;
+          btn.textContent = 'Applied ✓';
+          addChatMessage(`✎ Updated ${n} form fields (highlighted in yellow).`, 'info');
+        };
+        box.appendChild(document.createElement('br'));
+        box.appendChild(btn);
       }
 
       async function sendChat() {
@@ -1126,10 +1212,14 @@
           }
           assistantState = data.request;
           addChatMessage(data.reply, 'bot');
-          data.warnings.forEach(w => addChatMessage('ⓘ ' + w, 'info'));
+           data.warnings.forEach(w => {
+            if (!shownWarnings.has(w)) {
+              shownWarnings.add(w);
+              addChatMessage('ⓘ ' + w, 'info');
+            }
+          });
           if (Object.keys(data.fields).length > 0) {
-            const n = fillForm(data.fields);
-            addChatMessage(`✎ Updated ${n} form fields (highlighted in yellow).`, 'info');
+            showProposal(data);
           }
         } catch (err) {
           thinking.remove();
@@ -1142,8 +1232,10 @@
 
       function resetChat() {
         assistantState = null;
+        shownWarnings.clear();
         document.getElementById('chat-log').innerHTML = '';
         document.querySelectorAll('.ai-filled').forEach(el => el.classList.remove('ai-filled'));
+        addChatMessage(GREETING, 'bot');
       }
 
       document.getElementById('chat-input').addEventListener('keydown', e => {

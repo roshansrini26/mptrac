@@ -25,7 +25,7 @@ def build_reply(result: ValidationResult) -> str:
         asks = list(dict.fromkeys(FIELD_QUESTIONS[name] for name in result.missing))
         parts.append("I still need " + ", ".join(asks) + ".")
     if not parts:
-        return "All set. I filled in the form. Please review the highlighted fields and press Run."
+        return "Here is the configuration I understood. Please check it and click Apply to fill in the form."
     return " ".join(parts)
 
 
