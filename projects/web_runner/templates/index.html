@@ -1133,13 +1133,13 @@
 
       function fillForm(fields) {
         document.querySelectorAll('.ai-filled').forEach(el => el.classList.remove('ai-filled'));
-        const section = el.closest('.section-card');
-        if (section) section.classList.remove('w3-hide');
         let count = 0;
         Object.entries(fields).forEach(([name, value]) => {
           document.querySelectorAll(`form[action="/run"] [name="${name}"]`).forEach(el => {
             el.value = value;
             el.classList.add('ai-filled');
+            const section = el.closest('.section-card');      // ← inside, where el exists
+            if (section) section.classList.remove('w3-hide');
             count++;
           });
         });
