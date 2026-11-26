@@ -209,6 +209,14 @@
           grid-template-columns: 1fr;
         }
       }
+      
+      /* AI assistant chat */
+      .chat-log { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+      .chat-msg { padding: 8px 12px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; }
+      .chat-user { align-self: flex-end; background: #0d4f8b; color: #fff; }
+      .chat-bot  { align-self: flex-start; background: #2b3440; color: #f4f7fb; }
+      .chat-info { align-self: flex-start; color: #f0c36d; font-size: 0.9em; }
+      .ai-filled { outline: 2px solid #f0c36d; }
 
     </style>
   </head>
@@ -257,6 +265,19 @@
     <p style="text-align: center; max-width: 900px; margin: 0 auto; color: #ccc;">
       For a first run, choose a meteorological dataset, set the release time and location, and keep most other default settings unchanged. You can also load a predefined case from the Examples section.
     </p>
+
+    <!-- AI assistant -->
+    <div id="assistant-panel" class="section-card page-width" style="margin: 16px auto; padding: 16px;">
+      <h4><i class="fa fa-robot"></i> AI Assistant</h4>
+      <p style="color: #ccc;">Describe your simulation in plain language. The assistant fills in the form below for you to review.</p>
+      <div id="chat-log" class="chat-log"></div>
+      <div style="display: flex; gap: 8px; margin-top: 8px;">
+        <input id="chat-input" class="w3-input w3-dark-gray w3-round" type="text"
+               placeholder="e.g. 5,000 particles from 50°N, 7°E between 10 and 12 km for 2 days, starting 5 June 2011 at 00 UTC">
+        <button id="chat-send" type="button" class="btn btn-primary" style="padding: 8px 16px;" onclick="sendChat()">Send</button>
+        <button type="button" class="btn btn-secondary" style="padding: 8px 16px;" onclick="resetChat()">New</button>
+      </div>
+    </div>
     
     <!-- Form -->
     <form method="POST" action="/run" onsubmit="showProgressModal()" class="w3-container w3-padding-16 page-width">
@@ -1051,6 +1072,88 @@
 	<a href="https://www.fz-juelich.de/en/privacy-policy" class="btn btn-primary btn-footer">Privacy Policy</a>
       </div>
     </footer>
-    
+  
+    <!-- AI assistant logic -->
+    <script>
+      let assistantState = null;   // request built so far; sent back with every message
+
+      function addChatMessage(text, kind) {
+        const div = document.createElement('div');
+        div.className = 'chat-msg chat-' + kind;
+        div.textContent = text;     // textContent, never innerHTML: LLM text must not become HTML
+        const log = document.getElementById('chat-log');
+        log.appendChild(div);
+        log.scrollTop = log.scrollHeight;
+        return div;
+      }
+
+      function fillForm(fields) {
+        document.querySelectorAll('.ai-filled').forEach(el => el.classList.remove('ai-filled'));
+        let count = 0;
+        Object.entries(fields).forEach(([name, value]) => {
+          document.querySelectorAll(`form[action="/run"] [name="${name}"]`).forEach(el => {
+            el.value = value;
+            el.classList.add('ai-filled');
+            count++;
+          });
+        });
+        return count;
+      }
+
+      async function sendChat() {
+        const input = document.getElementById('chat-input');
+        const button = document.getElementById('chat-send');
+        const message = input.value.trim();
+        if (!message) return;
+
+        addChatMessage(message, 'user');
+        input.value = '';
+        button.disabled = true;
+        const thinking = addChatMessage('Thinking…', 'bot');
+
+        try {
+          const response = await fetch('/assistant', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: message, previous: assistantState}),
+          });
+          const data = await response.json();
+          thinking.remove();
+
+          if (!response.ok) {
+            addChatMessage(data.error || 'Something went wrong.', 'bot');
+            return;
+          }
+          assistantState = data.request;
+          addChatMessage(data.reply, 'bot');
+          data.warnings.forEach(w => addChatMessage('ⓘ ' + w, 'info'));
+          if (Object.keys(data.fields).length > 0) {
+            const n = fillForm(data.fields);
+            addChatMessage(`✎ Updated ${n} form fields (highlighted in yellow).`, 'info');
+          }
+        } catch (err) {
+          thinking.remove();
+          addChatMessage('Could not reach the server.', 'bot');
+        } finally {
+          button.disabled = false;
+          input.focus();
+        }
+      }
+
+      function resetChat() {
+        assistantState = null;
+        document.getElementById('chat-log').innerHTML = '';
+        document.querySelectorAll('.ai-filled').forEach(el => el.classList.remove('ai-filled'));
+      }
+
+      document.getElementById('chat-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+      });
+
+      // Remove the highlight when the user edits a field by hand.
+      document.querySelector('form[action="/run"]')
+        .addEventListener('input', e => e.target.classList.remove('ai-filled'));
+    </script>
+
   </body>
 </html>
